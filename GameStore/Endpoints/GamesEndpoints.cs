@@ -37,7 +37,7 @@ public static class GamesEndpoints
                 {
                     return Results.BadRequest("Invalid game data. Name, Genre must be provided and Price must be greater than 0.");
                 }
-                ddwdwad
+                
                 var newGame = new GameDto(games.Count + 1, game.Name, game.Genre, game.Price, game.ReleaseDate);
                 games.Add(newGame);
                 return Results.CreatedAtRoute(GetGameEndpointName, new { id = newGame.Id }, newGame);
