@@ -1,13 +1,16 @@
 using System;
+using GameStore.Data;
 using GameStore.Dtos;
+using GameStore.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace GameStore.Endpoints;
 
 public static class GamesEndpoints
 {
     const string GetGameEndpointName = "GetGame";
-    
-    private static readonly List<GameDto> games = [
+
+    private static readonly List<GameSummaryDto> games = [
         new (1, "The Legend of Zelda: Breath of the Wild", "Action-adventure", 59.99m, new DateOnly(2017, 3, 3)),
         new (2, "Super Mario Odyssey", "Platformer", 59.99m, new DateOnly(2017, 10, 27)),
         new (3, "Red Dead Redemption 2", "Action-adventure", 59.99m, new DateOnly(2018, 10, 26)),
@@ -16,53 +19,74 @@ public static class GamesEndpoints
     ];
 
     public static void MapGamesEndpoints(this WebApplication app)
+    {
+        var group = app.MapGroup("/games").WithTags("Games");
+
+        // GET  /games http://localhost:5022
+        group.MapGet("/", async (GameStoreContext dbContext) => await dbContext.Games.Include(game => game.Genre).Select(
+            game => new GameSummaryDto(game.Id, game.Name, game.Genre!.Name, game.Price, game.ReleaseDate)).AsNoTracking().ToListAsync());
+
+        // Get /games/{id} http://localhost:5022/games/1
+        group.MapGet("/{id}", async (int id, GameStoreContext dbContext) =>
         {
-            var group = app.MapGroup("/games").WithTags("Games");
+            var game = await dbContext.Games.FindAsync(id);
+            return game is not null
+                ? Results.Ok(new GameDetailsDto(game.Id, game.Name, game.GenreId, game.Price, game.ReleaseDate))
+                : Results.NotFound();
+        }).WithName(GetGameEndpointName);
 
-            // GET  /games http://localhost:5022
-            group.MapGet("/", () => games);
-
-            // Get /games/{id} http://localhost:5022/games/1
-            group.MapGet("/{id}", (int id) =>
-            { 
-                var game = games.Find(games => games.Id == id);
-                if (game == null) return Results.NotFound();
-                return Results.Ok(game);
-            }).WithName(GetGameEndpointName);
-
-            // POST /games http://localhost:5022/games
-            group.MapPost("/", (CreateGameDto game) =>
+        // POST /games http://localhost:5022/games
+        group.MapPost("/", async (CreateGameDto game, GameStoreContext dbContext) =>
+        {
+            Game newGame = new()
             {
-                if (string.IsNullOrEmpty(game.Name) || string.IsNullOrEmpty(game.Genre) || game.Price <= 0)
-                {
-                    return Results.BadRequest("Invalid game data. Name, Genre must be provided and Price must be greater than 0.");
-                }
-                
-                var newGame = new GameDto(games.Count + 1, game.Name, game.Genre, game.Price, game.ReleaseDate);
-                games.Add(newGame);
-                return Results.CreatedAtRoute(GetGameEndpointName, new { id = newGame.Id }, newGame);
-            });
+                Name = game.Name,
+                GenreId = game.GenreId,
+                Price = game.Price,
+                ReleaseDate = game.ReleaseDate
+            };
 
-            //put /games/{id} http://localhost:5022/games/1
-            group.MapPut("/{id}", (int id, UpdateGameDto updatedGame) =>
-            {
-                var index = games.FindIndex(games => games.Id == id);
-                if (index == -1)    {
-                    return Results.NotFound();
-                }
-                games[index] = new GameDto (id, updatedGame.Name, updatedGame.Genre, updatedGame.Price, updatedGame.ReleaseDate);
-                return Results.NoContent();
-            });
 
-            // DELETE /games/{id} http://localhost:5022/games/1
-            group.MapDelete("/{id}", (int id) =>
+            if (string.IsNullOrEmpty(game.Name) || game.GenreId <= 0 || game.Price <= 0)
             {
-                var index = games.FindIndex(games => games.Id == id);
-                if (index == -1)    {
-                    return Results.NotFound();
-                }
-                games.RemoveAt(index);
-                return Results.NoContent();
-            });
-        }
+                return Results.BadRequest("Invalid game data. Name, Genre must be provided and Price must be greater than 0.");
+            }
+            dbContext.Games.Add(newGame);
+            dbContext.SaveChangesAsync().Wait();
+            GameDetailsDto gameDetailsDto = new(newGame.Id, newGame.Name, newGame.GenreId, newGame.Price, newGame.ReleaseDate);
+            return Results.CreatedAtRoute(GetGameEndpointName, new { id = gameDetailsDto.Id }, gameDetailsDto);
+        });
+
+        //put /games/{id} http://localhost:5022/games/1
+        group.MapPut("/{id}", async (int id, UpdateGameDto updatedGame, GameStoreContext dbContext) =>
+        {
+            var game = await dbContext.Games.FindAsync(id);
+            
+            if (game is null)
+            {
+                return Results.NotFound();
+            }
+            game.Name = updatedGame.Name;
+            game.GenreId = updatedGame.GenreId;
+            game.Price = updatedGame.Price;
+            game.ReleaseDate = updatedGame.ReleaseDate;
+
+            dbContext.Games.Update(game);
+            dbContext.SaveChangesAsync().Wait();
+            return Results.Ok(new GameDetailsDto(game.Id, game.Name, game.GenreId, game.Price, game.ReleaseDate));
+        });
+
+        // DELETE /games/{id} http://localhost:5022/games/1
+        group.MapDelete("/{id}", async (int id, GameStoreContext dbContext) =>
+        {
+            var game = await dbContext.Games.FindAsync(id);
+            if (game is null)
+            {
+                return Results.NotFound();
+            }
+            dbContext.Games.Remove(game);
+            dbContext.SaveChangesAsync().Wait();
+            return Results.NoContent();
+        });
     }
+}
